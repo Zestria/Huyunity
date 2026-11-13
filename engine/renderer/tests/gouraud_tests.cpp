@@ -233,21 +233,22 @@ void testGouraud2DRasterization() {
 
     renderer::rasterizeTriangleGouraud2D(screenX, screenY, c0, c1, c2, framebuffer);
 
-    // Проверяем пиксели около вершин
+    // Проверяем внутренние пиксели около вершин: нижнее ребро исключено правилом top-left.
     const auto nearV0 = pixel(framebuffer, 60, 21);
     CHECK(nearV0.red >= 245);
     CHECK(nearV0.green <= 5);
     CHECK(nearV0.blue <= 5);
 
-    const auto nearV1 = pixel(framebuffer, 11, 110);
+    const auto nearV1 = pixel(framebuffer, 11, 109);
     CHECK(nearV1.green >= 245);
     CHECK(nearV1.red <= 5);
     CHECK(nearV1.blue <= 5);
 
-    const auto nearV2 = pixel(framebuffer, 109, 110);
+    const auto nearV2 = pixel(framebuffer, 109, 109);
     CHECK(nearV2.blue >= 245);
     CHECK(nearV2.red <= 5);
     CHECK(nearV2.green <= 5);
+    CHECK(pixel(framebuffer, 60, 110) == BLACK);
 
     // Центр треугольника
     const auto center = pixel(framebuffer, 60, 80);

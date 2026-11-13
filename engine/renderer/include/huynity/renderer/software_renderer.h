@@ -388,6 +388,26 @@ inline void clear(image::ImageBuffer& framebuffer, const render_contracts::Color
     return (otherX - pointX) * (sampleY - pointY) - (sampleX - pointX) * (otherY - pointY);
 }
 
+/// @brief Определяет включённое ребро по правилу top-left в экранных координатах (y вниз).
+[[nodiscard]] inline bool isTopLeftEdge(double firstX, double firstY, double secondX, double secondY,
+                                        double area) noexcept {
+    if (area < 0) {
+        std::swap(firstX, secondX);
+        std::swap(firstY, secondY);
+    }
+    return secondY < firstY || (secondY == firstY && secondX > firstX);
+}
+
+[[nodiscard]] inline bool coversTriangleSample(const std::array<double, 3>& weights,
+                                               const std::array<bool, 3>& includedEdges) noexcept {
+    for (std::size_t edge = 0; edge < weights.size(); ++edge) {
+        if (weights[edge] < 0 || (weights[edge] == 0 && !includedEdges[edge])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// @brief Заполняет треугольник с depth-тестом; меньшая view-глубина перекрывает большую.
 inline void rasterizeTriangle(const ProjectedVertex& first, const ProjectedVertex& second, const ProjectedVertex& third,
                               const render_contracts::Color& color, image::ImageBuffer& framebuffer,
@@ -913,6 +933,11 @@ inline void rasterizeTriangle2D(const std::array<double, 3>& screenX, const std:
     const auto clampY = [&](double value) {
         return static_cast<std::size_t>(std::floor(std::clamp(value, 0.0, height - 1)));
     };
+    const std::array<bool, 3> includedEdges{
+        isTopLeftEdge(screenX[1], screenY[1], screenX[2], screenY[2], area),
+        isTopLeftEdge(screenX[2], screenY[2], screenX[0], screenY[0], area),
+        isTopLeftEdge(screenX[0], screenY[0], screenX[1], screenY[1], area),
+    };
     for (std::size_t y = clampY(minYf); y <= clampY(maxYf); ++y) {
         for (std::size_t x = clampX(minXf); x <= clampX(maxXf); ++x) {
             const double sampleX = static_cast<double>(x) + 0.5;
@@ -923,8 +948,7 @@ inline void rasterizeTriangle2D(const std::array<double, 3>& screenX, const std:
                 edgeFunction(screenX[2], screenY[2], screenX[0], screenY[0], sampleX, sampleY) / area;
             const double weight2 =
                 edgeFunction(screenX[0], screenY[0], screenX[1], screenY[1], sampleX, sampleY) / area;
-            constexpr double tolerance = -1e-9;
-            if (weight0 < tolerance || weight1 < tolerance || weight2 < tolerance) {
+            if (!coversTriangleSample({weight0, weight1, weight2}, includedEdges)) {
                 continue;
             }
             blendPixel(framebuffer, x, y, color);
@@ -959,6 +983,11 @@ inline void rasterizeTriangleGouraud2D(const std::array<double, 3>& screenX, con
     const auto clampY = [&](double value) {
         return static_cast<std::size_t>(std::floor(std::clamp(value, 0.0, height - 1)));
     };
+    const std::array<bool, 3> includedEdges{
+        isTopLeftEdge(screenX[1], screenY[1], screenX[2], screenY[2], area),
+        isTopLeftEdge(screenX[2], screenY[2], screenX[0], screenY[0], area),
+        isTopLeftEdge(screenX[0], screenY[0], screenX[1], screenY[1], area),
+    };
     for (std::size_t y = clampY(minYf); y <= clampY(maxYf); ++y) {
         for (std::size_t x = clampX(minXf); x <= clampX(maxXf); ++x) {
             const double sampleX = static_cast<double>(x) + 0.5;
@@ -969,8 +998,7 @@ inline void rasterizeTriangleGouraud2D(const std::array<double, 3>& screenX, con
                 edgeFunction(screenX[2], screenY[2], screenX[0], screenY[0], sampleX, sampleY) / area;
             const double weight2 =
                 edgeFunction(screenX[0], screenY[0], screenX[1], screenY[1], sampleX, sampleY) / area;
-            constexpr double tolerance = -1e-9;
-            if (weight0 < tolerance || weight1 < tolerance || weight2 < tolerance) {
+            if (!coversTriangleSample({weight0, weight1, weight2}, includedEdges)) {
                 continue;
             }
             const render_contracts::Color interpolatedColor{
@@ -1020,6 +1048,11 @@ inline void rasterizeTriangleTextured2D(const std::array<double, 3>& screenX, co
     const auto clampY = [&](double value) {
         return static_cast<std::size_t>(std::floor(std::clamp(value, 0.0, height - 1)));
     };
+    const std::array<bool, 3> includedEdges{
+        isTopLeftEdge(screenX[1], screenY[1], screenX[2], screenY[2], area),
+        isTopLeftEdge(screenX[2], screenY[2], screenX[0], screenY[0], area),
+        isTopLeftEdge(screenX[0], screenY[0], screenX[1], screenY[1], area),
+    };
     for (std::size_t y = clampY(minYf); y <= clampY(maxYf); ++y) {
         for (std::size_t x = clampX(minXf); x <= clampX(maxXf); ++x) {
             const double sampleX = static_cast<double>(x) + 0.5;
@@ -1030,8 +1063,7 @@ inline void rasterizeTriangleTextured2D(const std::array<double, 3>& screenX, co
                 edgeFunction(screenX[2], screenY[2], screenX[0], screenY[0], sampleX, sampleY) / area;
             const double weight2 =
                 edgeFunction(screenX[0], screenY[0], screenX[1], screenY[1], sampleX, sampleY) / area;
-            constexpr double tolerance = -1e-9;
-            if (weight0 < tolerance || weight1 < tolerance || weight2 < tolerance) {
+            if (!coversTriangleSample({weight0, weight1, weight2}, includedEdges)) {
                 continue;
             }
             const double u = weight0 * uv[0][0] + weight1 * uv[1][0] + weight2 * uv[2][0];

@@ -1,5 +1,7 @@
 #include "huynity/renderer/software_renderer.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -241,6 +243,48 @@ void invalid2DIndicesAreErrors() {
     CHECK(renderer::render(snapshot, framebuffer).error() == renderer::RenderError::InvalidMaterial);
 }
 
+void adjacentTrianglesBlendSharedEdgesOnlyOnce() {
+    const std::array<math::Point2, 4> points{{{{0, 0}}, {{4, 0}}, {{4, 4}}, {{0, 4}}}};
+    auto texture = image::ImageBuffer::create({1, 1});
+    CHECK(texture.has_value());
+    std::ranges::fill(texture->bytes(), std::byte{255});
+    const render::Color tint{1, 0, 0, 0.5};
+    for (int mode = 0; mode < 3; ++mode) {
+        for (const bool reversed : {false, true}) {
+            for (const bool reverseOrder : {false, true}) {
+                auto framebuffer = makeFramebuffer(4, 4);
+                renderer::detail::clear(framebuffer, {0, 0, 0, 1});
+                std::array<std::array<std::size_t, 3>, 2> triangles{{{0, 1, 2}, {0, 2, 3}}};
+                if (reverseOrder) {
+                    std::swap(triangles[0], triangles[1]);
+                }
+                for (auto indices : triangles) {
+                    if (reversed) {
+                        std::swap(indices[0], indices[2]);
+                    }
+                    const auto& first = points[indices[0]];
+                    const auto& second = points[indices[1]];
+                    const auto& third = points[indices[2]];
+                    if (mode == 0) {
+                        renderer::detail::rasterizeTriangle2D({first[0], second[0], third[0]},
+                                                              {first[1], second[1], third[1]}, tint, framebuffer);
+                    } else if (mode == 1) {
+                        renderer::rasterizeTriangleGouraud2D(first, second, third, tint, tint, tint, framebuffer);
+                    } else {
+                        renderer::rasterizeTriangleTextured2D(first, second, third, {}, {}, {}, *texture, tint,
+                                                              framebuffer);
+                    }
+                }
+                for (std::size_t y = 0; y < 4; ++y) {
+                    for (std::size_t x = 0; x < 4; ++x) {
+                        CHECK(pixel(framebuffer, x, y) == Rgba{128, 0, 0, 255});
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main() {
     try {
         world2DUsesOwnCameraIndependentOf3D();
@@ -249,6 +293,7 @@ int main() {
         alphaBlendingCompositesSourceOver();
         passOrderControlsMixedComposition();
         invalid2DIndicesAreErrors();
+        adjacentTrianglesBlendSharedEdgesOnlyOnce();
         std::cout << "composition: OK\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
