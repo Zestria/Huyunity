@@ -72,7 +72,8 @@ public:
 
     [[nodiscard]] static Result<WorldDrawList3> prepareWorld3D(Scene& scene, render_contracts::Camera3 camera,
                                                                render_contracts::Lighting3 lighting = {},
-                                                               objectlib::TessellationOptions options = {}) {
+                                                               objectlib::TessellationOptions options = {},
+                                                               double aspectRatio = 1.0) {
         auto spatial = scene.refreshSpatialState();
         if (!spatial) {
             return std::unexpected(spatial.error());
@@ -87,7 +88,7 @@ public:
                 continue;
             }
             const auto& bounds = std::get<objectlib::Aabb3>(*instance.worldBounds);
-            if (!isVisible(bounds, worldToView, result.camera)) {
+            if (!isVisible(bounds, worldToView, result.camera, aspectRatio)) {
                 continue;
             }
             auto geometry = scene.tessellation(instance.id, options);
@@ -150,7 +151,8 @@ public:
         return result;
     }
 
-    [[nodiscard]] static Result<PreparedPasses> preparePasses(Scene& scene, const PassesConfig& config) {
+    [[nodiscard]] static Result<PreparedPasses> preparePasses(Scene& scene, const PassesConfig& config,
+                                                              double aspectRatio = 1.0) {
         PreparedPasses result;
         auto appendWorld2 = [&]() -> std::expected<void, objectlib::GeometryError> {
             if (!config.camera2) {
@@ -170,7 +172,7 @@ public:
             }
         }
         if (config.camera3) {
-            auto prepared = prepareWorld3D(scene, *config.camera3, config.lighting, config.tessellation);
+            auto prepared = prepareWorld3D(scene, *config.camera3, config.lighting, config.tessellation, aspectRatio);
             if (!prepared) {
                 return std::unexpected(prepared.error());
             }
@@ -194,7 +196,8 @@ public:
 
     [[nodiscard]] static Result<render_contracts::RenderSnapshot>
     prepareSnapshot(Scene& scene, const PassesConfig& config, std::size_t imageWidth, std::size_t imageHeight) {
-        auto prepared = preparePasses(scene, config);
+        const double aspectRatio = imageHeight == 0 ? 1.0 : static_cast<double>(imageWidth) / imageHeight;
+        auto prepared = preparePasses(scene, config, aspectRatio);
         if (!prepared) {
             return std::unexpected(prepared.error());
         }
@@ -329,13 +332,13 @@ private:
     }
 
     [[nodiscard]] static bool isVisible(const objectlib::Aabb3& worldBounds, const math::Transform3& worldToView,
-                                        const render_contracts::Camera3& camera) {
+                                        const render_contracts::Camera3& camera, double aspectRatio = 1.0) {
         const auto bounds = transformBounds(worldBounds, worldToView);
         return std::visit(
             [&](const auto& value) {
                 using CameraType = std::decay_t<decltype(value)>;
                 if (!std::isfinite(value.nearPlane) || !std::isfinite(value.farPlane) || value.nearPlane < 0 ||
-                    value.farPlane < value.nearPlane) {
+                    value.farPlane <= value.nearPlane) {
                     return false;
                 }
                 if (bounds.max()[2] < value.nearPlane || bounds.min()[2] > value.farPlane) {
@@ -350,13 +353,16 @@ private:
                            bounds.max()[1] >= -value.height / 2 && bounds.min()[1] <= value.height / 2;
                 } else {
                     if (!std::isfinite(value.verticalFieldOfView) || value.verticalFieldOfView <= 0 ||
-                        value.verticalFieldOfView >= std::numbers::pi) {
+                        value.verticalFieldOfView >= std::numbers::pi || value.nearPlane <= 0 ||
+                        !std::isfinite(aspectRatio) || aspectRatio <= 0) {
                         return false;
                     }
-                    const double nearestDepth = std::max(bounds.min()[2], value.nearPlane);
-                    const double halfExtent = nearestDepth * std::tan(value.verticalFieldOfView / 2);
-                    return bounds.max()[0] >= -halfExtent && bounds.min()[0] <= halfExtent &&
-                           bounds.max()[1] >= -halfExtent && bounds.min()[1] <= halfExtent;
+                    // Самое широкое сечение пересечения AABB с диапазоном глубины камеры.
+                    const double farthestDepth = std::min(bounds.max()[2], value.farPlane);
+                    const double halfHeight = farthestDepth * std::tan(value.verticalFieldOfView / 2);
+                    const double halfWidth = halfHeight * aspectRatio;
+                    return bounds.max()[0] >= -halfWidth && bounds.min()[0] <= halfWidth &&
+                           bounds.max()[1] >= -halfHeight && bounds.min()[1] <= halfHeight;
                 }
             },
             camera);

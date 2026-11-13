@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -115,6 +116,31 @@ void cameraTransformsAffectBoth3dCullingModes() {
     CHECK(perspectiveResult->drawItems.empty());
 }
 
+void perspectiveCullingUsesViewportAndFarthestDepth() {
+    core::Scene scene;
+    const auto id = scene.createObject<objects::ObjectType::Box3>({.size = {{2, 2, 2}}});
+    CHECK(id.has_value());
+    CHECK(scene.setLocalTransform(*id, math::translation(math::Vector3{{15, 0, 10}})).has_value());
+    core::PassesConfig config;
+    config.camera3 =
+        render::PerspectiveCamera3{.verticalFieldOfView = std::numbers::pi / 2, .nearPlane = 0.1, .farPlane = 100};
+    config.hudEnabled = false;
+    auto wide = core::RenderPreparation::prepareSnapshot(scene, config, 200, 100);
+    CHECK(wide.has_value());
+    CHECK(std::get<render::World3DPass>(wide->passes[0]).drawItems.size() == 1);
+    auto square = core::RenderPreparation::prepareSnapshot(scene, config, 100, 100);
+    CHECK(square.has_value());
+    CHECK(std::get<render::World3DPass>(square->passes[0]).drawItems.empty());
+
+    const auto deepBox = objects::Box3::create({.size = {{2, 2, 8}}});
+    CHECK(deepBox.has_value());
+    CHECK(scene.setGeometry(*id, objects::Geometry{*deepBox}).has_value());
+    CHECK(scene.setLocalTransform(*id, math::translation(math::Vector3{{6, 0, 6}})).has_value());
+    auto deep = core::RenderPreparation::prepareSnapshot(scene, config, 100, 100);
+    CHECK(deep.has_value());
+    CHECK(std::get<render::World3DPass>(deep->passes[0]).drawItems.size() == 1);
+}
+
 int main() {
     try {
         world3dContainsAllVisibleStateAfterCommands();
@@ -122,6 +148,7 @@ int main() {
         world2dUsesIndependentCameraAndVisibility();
         perspectiveCullsDepthAndHorizontalBounds();
         cameraTransformsAffectBoth3dCullingModes();
+        perspectiveCullingUsesViewportAndFarthestDepth();
         std::cout << "draw_lists: OK\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

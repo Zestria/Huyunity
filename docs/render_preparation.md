@@ -44,6 +44,11 @@ Camera-dependent LOD сейчас не реализован. Если он по�
 зависит от предыдущего кадра. Мировые passes используют camera transforms и world bounds для
 culling; HUD использует screen-space transforms и сортируется по `(layer, order)`.
 
+Для перспективной камеры `prepareSnapshot` передаёт в culling соотношение ширины и высоты
+изображения. При прямом вызове `prepareWorld3D` или `preparePasses` оно задаётся последним
+параметром `aspectRatio` (по умолчанию 1). Проверка AABB использует наиболее широкое сечение
+в пределах near/far, чтобы не отбрасывать объекты, частично пересекающие область видимости.
+
 Mesh и материалы дедуплицируются в таблицах снимка, draw items содержат их индексы. Каждый
 `MeshResource` хранит `shared_ptr<const void>` владельца tessellation и read-only spans на
 positions и bytes индексов. Поэтому массивы не копируются и остаются доступными после удаления
