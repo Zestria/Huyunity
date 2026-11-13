@@ -29,6 +29,10 @@ immutable Geometry, `geometryVersion`, `TessellationOptions::maxDeviation` и
 `shared_ptr<const TessellatedGeometry>`. Движение не меняет ключ и не вызывает повторную
 тесселяцию; изменение любого входа создаёт отдельный результат.
 
+Кеш хранит слабую ссылку на исходную Geometry. При следующем запросе записи геометрии без
+внешних владельцев удаляются вместе с кешированными результатами. Уже выданные
+`shared_ptr<const TessellatedGeometry>` остаются действительными, в том числе в снимках кадра.
+
 `GeometryError` не добавляет частичный результат в кеш и не изменяет Geometry или регистрацию
 объектов. `prepareSnapshot` возвращает ошибку вместо частичного снимка. Счётчики
 `tessellationCalculations()` и `tessellationCacheHits()` позволяют тестам отличать reuse от

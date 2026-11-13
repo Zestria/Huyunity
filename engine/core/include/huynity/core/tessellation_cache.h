@@ -18,8 +18,9 @@ public:
 
     [[nodiscard]] Result get(std::shared_ptr<const objectlib::Geometry> geometry, std::uint64_t geometryVersion,
                              objectlib::TessellationOptions options) {
+        std::erase_if(m_entries, [](const Entry& entry) { return entry.geometry.expired(); });
         const auto cached = std::find_if(m_entries.begin(), m_entries.end(), [&](const Entry& entry) {
-            return entry.geometry == geometry && entry.geometryVersion == geometryVersion &&
+            return entry.geometry.lock() == geometry && entry.geometryVersion == geometryVersion &&
                    entry.options.maxDeviation == options.maxDeviation &&
                    entry.options.maxPrimitiveCount == options.maxPrimitiveCount;
         });
@@ -44,7 +45,7 @@ public:
 
 private:
     struct Entry {
-        std::shared_ptr<const objectlib::Geometry> geometry;
+        std::weak_ptr<const objectlib::Geometry> geometry;
         std::uint64_t geometryVersion;
         objectlib::TessellationOptions options;
         std::shared_ptr<const objectlib::TessellatedGeometry> tessellation;

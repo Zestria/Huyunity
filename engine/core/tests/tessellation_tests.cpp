@@ -95,12 +95,30 @@ void geometryErrorLeavesSceneAndCacheConsistent() {
     CHECK(scene.tessellationCalculations() == calculations + 1);
 }
 
+void cacheReleasesUnusedGeometry() {
+    core::Scene scene;
+    const auto id = createSphere(scene);
+    std::weak_ptr<const objects::Geometry> original = scene.find(id)->geometry;
+    std::weak_ptr<const objects::TessellatedGeometry> oldMesh;
+    {
+        auto mesh = scene.tessellation(id);
+        CHECK(mesh.has_value());
+        oldMesh = *mesh;
+    }
+    CHECK(scene.removeSubtree(id).has_value());
+    CHECK(original.expired());
+    const auto replacement = createSphere(scene);
+    CHECK(scene.tessellation(replacement).has_value());
+    CHECK(oldMesh.expired());
+}
+
 int main() {
     try {
         reuseAcrossMovementAndSharedInstances();
         qualityKeyIncludesEveryOption();
         geometryChangeInvalidatesOnlyNewVersion();
         geometryErrorLeavesSceneAndCacheConsistent();
+        cacheReleasesUnusedGeometry();
         std::cout << "tessellation_cache: OK\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
