@@ -43,6 +43,11 @@ void HeadlessWindow::pushEvents(std::span<const InputEvent> events) {
 }
 
 void HeadlessWindow::pollEvents(std::vector<InputEvent>& outEvents) {
+    for (const auto& event : m_eventQueue) {
+        if (const auto* resized = std::get_if<WindowResizedEvent>(&event)) {
+            m_size = {.width = resized->width, .height = resized->height};
+        }
+    }
     outEvents.insert(outEvents.end(), std::make_move_iterator(m_eventQueue.begin()),
                      std::make_move_iterator(m_eventQueue.end()));
     m_eventQueue.clear();

@@ -300,6 +300,29 @@ void testPolymorphicWindowAdapterUsage() {
     CHECK(!adapter->isOpen());
 }
 
+void testInjectedResizeUpdatesSizeBeforePresentation() {
+    window::HeadlessWindow win;
+    win.pushEvent(window::WindowResizedEvent{.width = 320, .height = 200});
+    const std::array<window::InputEvent, 2> batch{
+        window::MouseMovedEvent{.x = 12, .y = 34},
+        window::WindowResizedEvent{.width = 160, .height = 100},
+    };
+    win.pushEvents(batch);
+    std::vector<window::InputEvent> events;
+    win.pollEvents(events);
+    CHECK(events.size() == 3);
+    CHECK(win.size() == window::WindowSize{160, 100});
+    auto returned = win.present(createTestBuffer(160, 100));
+    CHECK(returned != nullptr);
+    CHECK(win.presentedCount() == 1);
+    CHECK(win.rejectedPresents() == 0);
+
+    win.pushEvent(window::WindowResizedEvent{});
+    events.clear();
+    win.pollEvents(events);
+    CHECK(win.size() == window::WindowSize{});
+}
+
 } // namespace
 
 int main() {
@@ -316,6 +339,7 @@ int main() {
         testPresentNullBuffer();
         testResizeThenPresent();
         testPolymorphicWindowAdapterUsage();
+        testInjectedResizeUpdatesSizeBeforePresentation();
 
         std::cout << "headless_window_tests: OK\n";
         return 0;
