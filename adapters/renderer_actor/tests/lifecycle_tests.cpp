@@ -52,6 +52,9 @@ void downWithoutFrameFailedStopsWaitingAndRetainsResources() {
     auto released = adapter.releaseAfterStop();
     CHECK(released.has_value());
     CHECK(released->frameId == 1);
+    CHECK(released->snapshot != nullptr);
+    CHECK(!adapter.isBusy());
+    CHECK(!adapter.releaseAfterStop().has_value());
     released.reset();
     rejected = {};
     marker.reset();

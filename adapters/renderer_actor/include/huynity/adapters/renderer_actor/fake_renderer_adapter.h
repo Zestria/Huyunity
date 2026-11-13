@@ -72,7 +72,7 @@ public:
         if (!m_isStopped) {
             return std::nullopt;
         }
-        return std::move(m_active);
+        return std::exchange(m_active, std::nullopt);
     }
 
     [[nodiscard]] bool isBusy() const noexcept { return m_active.has_value(); }
