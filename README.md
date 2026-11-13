@@ -48,7 +48,7 @@ docker compose up
 # Сборка проекта
 HUYNITY_BUILD_ADAPTERS=ON ./tools/scripts/build.sh
 
-# Запуск полного набора из 53 тестов CTest:
+# Запуск полного набора тестов CTest:
 ctest --test-dir build --output-on-failure
 
 # Запуск интерактивных примеров:

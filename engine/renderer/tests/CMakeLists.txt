@@ -68,4 +68,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME renderer.textured_rasterization COMMAND huynity_textured_rasterization_tests)
 
-
+add_executable(huynity_resource_validation_tests resource_validation_tests.cpp)
+target_link_libraries(huynity_resource_validation_tests PRIVATE huynity::renderer)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(huynity_resource_validation_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+foreach(test_case null_material truncated_triangles unaligned_triangles cache_identity clear_stride cache_lifetime)
+    add_test(NAME renderer.resource.${test_case} COMMAND huynity_resource_validation_tests ${test_case})
+endforeach()
