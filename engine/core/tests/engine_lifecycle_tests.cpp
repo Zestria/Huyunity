@@ -174,6 +174,62 @@ void testPresentationRendering() {
     CHECK(headless->lastPresentedFrame()->height() == 600);
 }
 
+void testStopPreventsFurtherCallbacks() {
+    for (int stopPhase = 0; stopPhase < 3; ++stopPhase) {
+        huynity::Engine engine({.windowSize = {16, 16}, .fixedTimeStep = 0.01, .forceHeadless = true});
+        auto& headless = dynamic_cast<huynity::adapters::window::HeadlessWindow&>(engine.window());
+        int events = 0;
+        int updates = 0;
+        int frames = 0;
+        engine.onEvent([&](const auto&) {
+            ++events;
+            if (stopPhase == 0) {
+                engine.stop();
+            }
+        });
+        engine.onUpdate([&](double) {
+            ++updates;
+            if (stopPhase == 1) {
+                engine.stop();
+            }
+        });
+        engine.onFrame([&](double) { ++frames; });
+        if (stopPhase == 0) {
+            headless.pushEvent(huynity::adapters::window::KeyPressedEvent{});
+            headless.pushEvent(huynity::adapters::window::KeyReleasedEvent{});
+        } else if (stopPhase == 2) {
+            headless.pushEvent(huynity::adapters::window::WindowCloseRequestedEvent{});
+        }
+        engine.step(0.05);
+        CHECK(events == 1 || stopPhase == 1);
+        CHECK(updates == (stopPhase == 1 ? 1 : 0));
+        CHECK(frames == 0);
+        CHECK(headless.presentedCount() == 0);
+        const int previousEvents = events;
+        engine.step(0.05);
+        CHECK(events == previousEvents);
+        CHECK(updates == (stopPhase == 1 ? 1 : 0));
+        CHECK(frames == 0);
+    }
+}
+
+void testRunResetsStateAfterCallbackException() {
+    huynity::Engine engine({.windowSize = {16, 16}, .forceHeadless = true});
+    engine.onFrame([](double) { throw std::runtime_error("callback failed"); });
+    bool hasThrown = false;
+    try {
+        engine.run();
+    } catch (const std::runtime_error&) {
+        hasThrown = true;
+    }
+    CHECK(hasThrown);
+    CHECK(!engine.isRunning());
+    CHECK(engine.window().isOpen());
+    engine.onFrame([&](double) { engine.stop(); });
+    engine.run();
+    CHECK(!engine.isRunning());
+}
+
 } // namespace
 
 int main() {
@@ -183,6 +239,8 @@ int main() {
         testWindowResizedEvent();
         testWindowCloseRequestedAndStop();
         testPresentationRendering();
+        testStopPreventsFurtherCallbacks();
+        testRunResetsStateAfterCallbackException();
         std::cout << "engine_lifecycle_tests: OK\n";
     } catch (const std::exception& error) {
         std::cerr << "Engine lifecycle test failed: " << error.what() << '\n';

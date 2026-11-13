@@ -122,6 +122,9 @@ void Engine::onEvent(EventCallback callback) {
 }
 
 void Engine::step(double dt) {
+    if (!m_window->isOpen()) {
+        return;
+    }
     std::vector<adapters::window::InputEvent> events;
     m_window->pollEvents(events);
 
@@ -151,13 +154,22 @@ void Engine::step(double dt) {
                 }
             },
             event);
+        if (!m_window->isOpen()) {
+            m_inputState.resetDeltas();
+            return;
+        }
     }
 
     m_fixedUpdate.advance(dt, [this](double fixedDt) {
-        if (m_onUpdate) {
+        if (m_window->isOpen() && m_onUpdate) {
             m_onUpdate(fixedDt);
         }
     });
+
+    if (!m_window->isOpen()) {
+        m_inputState.resetDeltas();
+        return;
+    }
 
     if (m_onFrame) {
         const double alpha =
@@ -199,18 +211,23 @@ void Engine::run() {
     auto previousTime = std::chrono::steady_clock::now();
     constexpr double maxDt = 0.1;
     const std::chrono::duration<double> targetFrameTime{1.0 / 60.0};
-    while (m_isRunning && m_window->isOpen()) {
-        const auto frameStart = std::chrono::steady_clock::now();
-        const std::chrono::duration<double> elapsed = frameStart - previousTime;
-        previousTime = frameStart;
-        const double dt = std::clamp(elapsed.count(), 0.0, maxDt);
-        step(dt);
+    try {
+        while (m_isRunning && m_window->isOpen()) {
+            const auto frameStart = std::chrono::steady_clock::now();
+            const std::chrono::duration<double> elapsed = frameStart - previousTime;
+            previousTime = frameStart;
+            const double dt = std::clamp(elapsed.count(), 0.0, maxDt);
+            step(dt);
 
-        const auto frameEnd = std::chrono::steady_clock::now();
-        const auto frameDuration = frameEnd - frameStart;
-        if (frameDuration < targetFrameTime) {
-            std::this_thread::sleep_for(targetFrameTime - frameDuration);
+            const auto frameEnd = std::chrono::steady_clock::now();
+            const auto frameDuration = frameEnd - frameStart;
+            if (frameDuration < targetFrameTime) {
+                std::this_thread::sleep_for(targetFrameTime - frameDuration);
+            }
         }
+    } catch (...) {
+        m_isRunning = false;
+        throw;
     }
     m_isRunning = false;
 }
