@@ -199,7 +199,9 @@ public:
         auto instance = *sourceInstance;
         instance.parent.reset();
         instance.children.clear();
-        return m_instances.insert(std::move(instance));
+        const auto id = m_instances.insert(std::move(instance));
+        updateWorld(id);
+        return id;
     }
 
     Result setParent(ObjectId child, std::optional<ObjectId> parent) {

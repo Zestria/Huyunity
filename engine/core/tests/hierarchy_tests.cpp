@@ -133,6 +133,33 @@ void nonRootRemovalAndSlotReuse() {
     CHECK(scene.find(child) == nullptr && scene.find(grandchild) == nullptr);
 }
 
+void detachedInstancesRecomputeWorldState() {
+    core::Scene scene;
+    for (const bool is2D : {true, false}) {
+        const auto parent = is2D ? createObject2(scene) : createObject(scene);
+        const auto child = is2D ? createObject2(scene) : createObject(scene);
+        const core::Transform parentTransform = is2D ? core::Transform{math::translation(math::Vector2{{10, 0}})}
+                                                     : core::Transform{math::translation(math::Vector3{{10, 0, 0}})};
+        CHECK(scene.setLocalTransform(parent, parentTransform).has_value());
+        CHECK(scene.setParent(child, parent).has_value());
+        CHECK(scene.refreshSpatialState().has_value());
+
+        const auto copy = scene.createInstance(child);
+        CHECK(copy.has_value());
+        CHECK(!scene.find(*copy)->parent.has_value());
+        CHECK(scene.find(*copy)->children.empty());
+        CHECK(scene.find(*copy)->geometry == scene.find(child)->geometry);
+        CHECK(scene.find(*copy)->worldTransform == scene.find(*copy)->localTransform);
+        CHECK(scene.refreshSpatialState().has_value());
+        const auto& bounds = *scene.find(*copy)->worldBounds;
+        std::visit([](const auto& value) { CHECK(value.min()[0] == 1); }, bounds);
+        const core::Transform movedParent = is2D ? core::Transform{math::translation(math::Vector2{{20, 0}})}
+                                                 : core::Transform{math::translation(math::Vector3{{20, 0, 0}})};
+        CHECK(scene.setLocalTransform(parent, movedParent).has_value());
+        CHECK(scene.find(*copy)->worldTransform == scene.find(*copy)->localTransform);
+    }
+}
+
 int main() {
     try {
         parentTransformsAndLocalPreservation();
@@ -140,6 +167,7 @@ int main() {
         subtreeRemovalInvalidatesEveryId();
         hierarchy2dAndReparenting();
         nonRootRemovalAndSlotReuse();
+        detachedInstancesRecomputeWorldState();
         std::cout << "hierarchy: OK\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
