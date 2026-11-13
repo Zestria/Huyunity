@@ -48,7 +48,7 @@ std::shared_ptr<const render::Material> material(double red, double green, doubl
 
 // Лицевая грань по соглашению рендерера: нормаль cross(b - a, c - a) смотрит в -z.
 TestMesh frontTriangle(double extent, double z) {
-    return {{{-extent, -extent, z}, {0, extent, z}, {extent, -extent, z}}, {{0, 1, 2}}, {}};
+    return {{{-extent, -extent, z}, {0, extent, z}, {extent, -extent, z}}, {{0, 1, 2}}};
 }
 
 image::ImageBuffer makeFramebuffer(std::size_t width, std::size_t height) {

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <expected>
 #include <limits>
+#include <list>
 #include <optional>
 #include <span>
 #include <tuple>
@@ -147,6 +148,9 @@ struct ViewDirectionalLight {
 /// Нормали граней вычисляются один раз для неизменного ресурса: ключом служат
 /// владелец ресурса, адреса и размеры массивов вершин и треугольников. Кеш не продлевает
 /// жизнь владельца; записи истёкших ресурсов удаляются перед следующим запросом.
+/// Выданные результаты сохраняют адрес и содержимое, пока жив владеющий ресурс.
+/// Без владеющего owner нормали пересчитываются во временный буфер; его результат
+/// действителен до следующего успешного запроса того же вида без владельца.
 class ShadingDataCache {
 public:
     [[nodiscard]] std::expected<const std::vector<math::Vector3>*, RenderError>
@@ -156,12 +160,15 @@ public:
             return std::unexpected(RenderError::InvalidResource);
         }
         const std::size_t triangleCount = resource.triangles.size() / sizeof(render_contracts::TriangleIndices);
-        for (const auto& entry : m_entries) {
-            if (entry.owner.lock().get() == resource.owner.get() && entry.positions == resource.positions.data() &&
-                entry.triangles == resource.triangles.data() && entry.vertexCount == resource.positions.size() &&
-                entry.triangleCount == triangleCount) {
-                ++m_hits;
-                return &entry.normals;
+        const bool hasOwner = resource.owner.use_count() != 0;
+        if (hasOwner) {
+            for (const auto& entry : m_entries) {
+                if (!entry.owner.owner_before(resource.owner) && !resource.owner.owner_before(entry.owner) &&
+                    entry.positions == resource.positions.data() && entry.triangles == resource.triangles.data() &&
+                    entry.vertexCount == resource.positions.size() && entry.triangleCount == triangleCount) {
+                    ++m_hits;
+                    return &entry.normals;
+                }
             }
         }
         auto normals = computeNormals(resource, triangleCount);
@@ -169,8 +176,12 @@ public:
             return std::unexpected(normals.error());
         }
         ++m_misses;
-        m_entries.push_back({resource.owner, resource.owner.use_count() != 0, resource.positions.data(),
-                             resource.triangles.data(), resource.positions.size(), triangleCount, std::move(*normals)});
+        if (!hasOwner) {
+            m_uncachedFaceNormals = std::move(*normals);
+            return &m_uncachedFaceNormals;
+        }
+        m_entries.push_back({resource.owner, resource.positions.data(), resource.triangles.data(),
+                             resource.positions.size(), triangleCount, std::move(*normals)});
         return &m_entries.back().normals;
     }
 
@@ -182,12 +193,15 @@ public:
         }
         const std::size_t triangleCount = resource.triangles.size() / sizeof(render_contracts::TriangleIndices);
         const std::size_t vertexCount = resource.positions.size();
-        for (const auto& entry : m_vertexEntries) {
-            if (entry.owner.lock().get() == resource.owner.get() && entry.positions == resource.positions.data() &&
-                entry.triangles == resource.triangles.data() && entry.vertexCount == vertexCount &&
-                entry.triangleCount == triangleCount) {
-                ++m_hits;
-                return &entry.normals;
+        const bool hasOwner = resource.owner.use_count() != 0;
+        if (hasOwner) {
+            for (const auto& entry : m_vertexEntries) {
+                if (!entry.owner.owner_before(resource.owner) && !resource.owner.owner_before(entry.owner) &&
+                    entry.positions == resource.positions.data() && entry.triangles == resource.triangles.data() &&
+                    entry.vertexCount == vertexCount && entry.triangleCount == triangleCount) {
+                    ++m_hits;
+                    return &entry.normals;
+                }
             }
         }
         auto normals = computeVertexNormals(resource, triangleCount, vertexCount);
@@ -195,8 +209,12 @@ public:
             return std::unexpected(normals.error());
         }
         ++m_misses;
-        m_vertexEntries.push_back({resource.owner, resource.owner.use_count() != 0, resource.positions.data(),
-                                   resource.triangles.data(), vertexCount, triangleCount, std::move(*normals)});
+        if (!hasOwner) {
+            m_uncachedVertexNormals = std::move(*normals);
+            return &m_uncachedVertexNormals;
+        }
+        m_vertexEntries.push_back({resource.owner, resource.positions.data(), resource.triangles.data(), vertexCount,
+                                   triangleCount, std::move(*normals)});
         return &m_vertexEntries.back().normals;
     }
 
@@ -206,17 +224,6 @@ public:
 private:
     struct Entry {
         std::weak_ptr<const void> owner;
-        bool hasOwner;
-        const math::Point3* positions;
-        const std::byte* triangles;
-        std::size_t vertexCount;
-        std::size_t triangleCount;
-        std::vector<math::Vector3> normals;
-    };
-
-    struct VertexEntry {
-        std::weak_ptr<const void> owner;
-        bool hasOwner;
         const math::Point3* positions;
         const std::byte* triangles;
         std::size_t vertexCount;
@@ -225,7 +232,7 @@ private:
     };
 
     void removeExpiredEntries() {
-        const auto expired = [](const auto& entry) { return entry.hasOwner && entry.owner.expired(); };
+        const auto expired = [](const auto& entry) { return entry.owner.expired(); };
         std::erase_if(m_entries, expired);
         std::erase_if(m_vertexEntries, expired);
     }
@@ -268,8 +275,10 @@ private:
         return normals;
     }
 
-    std::vector<Entry> m_entries;
-    std::vector<VertexEntry> m_vertexEntries;
+    std::list<Entry> m_entries;
+    std::list<Entry> m_vertexEntries;
+    std::vector<math::Vector3> m_uncachedFaceNormals;
+    std::vector<math::Vector3> m_uncachedVertexNormals;
     std::size_t m_hits{};
     std::size_t m_misses{};
 };
@@ -1113,12 +1122,12 @@ inline std::expected<void, RenderError> render2DPass(const render_contracts::Ren
         if (item->material >= snapshot.materials.size() || !snapshot.materials[item->material]) {
             return std::unexpected(RenderError::InvalidMaterial);
         }
-        if (camera && !isCameraValid) {
-            continue;
-        }
         const auto& resource = snapshot.resources2[item->resource];
         if (resource.triangles.size() % sizeof(render_contracts::TriangleIndices) != 0) {
             return std::unexpected(RenderError::InvalidResource);
+        }
+        if (camera && !isCameraValid) {
+            continue;
         }
         const auto& material = *snapshot.materials[item->material];
         const bool isTextured =

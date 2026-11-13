@@ -73,6 +73,7 @@ target_link_libraries(huynity_resource_validation_tests PRIVATE huynity::rendere
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(huynity_resource_validation_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-foreach(test_case null_material truncated_triangles unaligned_triangles cache_identity clear_stride cache_lifetime)
+foreach(test_case null_material truncated_triangles unaligned_triangles cache_identity clear_stride cache_lifetime
+                  borrowed_cache stable_cache_results aliasing_borrowed_cache world2d_invalid_camera)
     add_test(NAME renderer.resource.${test_case} COMMAND huynity_resource_validation_tests ${test_case})
 endforeach()
