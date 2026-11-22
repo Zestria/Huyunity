@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -148,22 +149,76 @@ void clearSupportsUnalignedStrideAndPreservesPadding() {
     }
 }
 
-void shadingCacheDoesNotRetainRemovedResources() {
-    renderer::ShadingDataCache cache;
-    std::weak_ptr<const void> owner;
-    {
-        const Fixture fixture;
-        owner = fixture.owner;
-        CHECK(cache.faceNormals(fixture.resource3()).has_value());
-        CHECK(cache.vertexNormals(fixture.resource3()).has_value());
-        CHECK(cache.faceNormals(fixture.resource3()).has_value());
-        CHECK(cache.hits() == 1);
+class TrackingMemoryResource final : public std::pmr::memory_resource {
+public:
+    [[nodiscard]] std::size_t outstandingAllocations() const noexcept { return m_outstandingAllocations; }
+
+private:
+    void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+        auto* allocation = std::pmr::new_delete_resource()->allocate(bytes, alignment);
+        ++m_outstandingAllocations;
+        return allocation;
     }
-    CHECK(owner.expired());
-    const Fixture replacement;
-    CHECK(cache.faceNormals(replacement.resource3()).has_value());
-    CHECK(cache.vertexNormals(replacement.resource3()).has_value());
-    CHECK(cache.misses() == 4);
+
+    void do_deallocate(void* allocation, std::size_t bytes, std::size_t alignment) override {
+        std::pmr::new_delete_resource()->deallocate(allocation, bytes, alignment);
+        --m_outstandingAllocations;
+    }
+
+    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override { return this == &other; }
+
+    std::size_t m_outstandingAllocations{};
+};
+
+void shadingCacheDoesNotRetainRemovedResources() {
+    for (const auto query : {&renderer::ShadingDataCache::faceNormals, &renderer::ShadingDataCache::vertexNormals}) {
+        TrackingMemoryResource memory;
+        renderer::ShadingDataCache cache;
+        std::weak_ptr<const void> owner;
+        {
+            Fixture fixture;
+            fixture.owner = std::allocate_shared<int>(std::pmr::polymorphic_allocator<int>{&memory}, 0);
+            owner = fixture.owner;
+            CHECK(cache.faceNormals(fixture.resource3()).has_value());
+            CHECK(cache.vertexNormals(fixture.resource3()).has_value());
+            CHECK((cache.*query)(fixture.resource3()).has_value());
+        }
+        CHECK(owner.expired());
+        CHECK(cache.hits() == 1);
+        owner.reset();
+        CHECK(memory.outstandingAllocations() > 0);
+
+        const Fixture replacement;
+        CHECK((cache.*query)(replacement.resource3()).has_value());
+        // После сброса наблюдателя блок владения удерживают только записи кеша.
+        CHECK(memory.outstandingAllocations() == 0);
+        CHECK(cache.misses() == 3);
+    }
+}
+
+void rendererEvictsExpiredEntriesAtFrameStart() {
+    TrackingMemoryResource memory;
+    renderer::SoftwareRenderer softwareRenderer;
+    auto framebuffer = image::ImageBuffer::create({4, 4});
+    CHECK(framebuffer.has_value());
+    {
+        Fixture fixture;
+        fixture.owner = std::allocate_shared<int>(std::pmr::polymorphic_allocator<int>{&memory}, 0);
+        auto snapshot = fixture.snapshot(true, fixture.resource3().triangles);
+        auto gouraudPass = std::get<render::World3DPass>(snapshot.passes.front());
+        gouraudPass.drawItems.front().shading = render::ShadingModel::Gouraud;
+        snapshot.passes.push_back(std::move(gouraudPass));
+        CHECK(softwareRenderer.render(snapshot, *framebuffer).has_value());
+        CHECK(softwareRenderer.render(snapshot, *framebuffer).has_value());
+        CHECK(softwareRenderer.shadingCacheHits() == 2);
+        CHECK(softwareRenderer.shadingCacheMisses() == 2);
+    }
+    CHECK(memory.outstandingAllocations() > 0);
+    render::RenderSnapshot emptyFrame;
+    emptyFrame.imageWidth = 4;
+    emptyFrame.imageHeight = 4;
+    CHECK(softwareRenderer.render(emptyFrame, *framebuffer).has_value());
+    CHECK(memory.outstandingAllocations() == 0);
 }
 
 void borrowedResourcesRecomputeNormalsAndValidateIndices() {
@@ -321,13 +376,14 @@ void invalidWorldCameraDoesNotSkipResourceValidation() {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    const std::array<std::pair<std::string_view, void (*)()>, 10> cases{{
+    const std::array<std::pair<std::string_view, void (*)()>, 11> cases{{
         {"null_material", nullMaterialsReturnAnError},
         {"truncated_triangles", truncatedTrianglesReturnAnError},
         {"unaligned_triangles", unalignedTriangleBytesAreSupported},
         {"cache_identity", faceNormalKeyIncludesTopologyAndVertexCount},
         {"clear_stride", clearSupportsUnalignedStrideAndPreservesPadding},
         {"cache_lifetime", shadingCacheDoesNotRetainRemovedResources},
+        {"frame_cache_lifetime", rendererEvictsExpiredEntriesAtFrameStart},
         {"borrowed_cache", borrowedResourcesRecomputeNormalsAndValidateIndices},
         {"stable_cache_results", liveCacheResultsSurviveCleanupAndInsertion},
         {"aliasing_borrowed_cache", nonOwningAliasesReuseTemporaryResults},

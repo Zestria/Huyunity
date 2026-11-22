@@ -31,6 +31,8 @@ enum class RenderError {
 using render_contracts::TextureFilter;
 using render_contracts::TextureWrap;
 
+class SoftwareRenderer;
+
 namespace detail {
 
 struct ProjectedVertex {
@@ -146,8 +148,9 @@ struct ViewDirectionalLight {
 /// @brief Кеш производных shading-данных на версию mesh-ресурса.
 ///
 /// Нормали граней вычисляются один раз для неизменного ресурса: ключом служат
-/// владелец ресурса, адреса и размеры массивов вершин и треугольников. Кеш не продлевает
-/// жизнь владельца; записи истёкших ресурсов удаляются перед следующим запросом.
+/// владелец ресурса, адреса и размеры массивов вершин и треугольников. Кеш хранит слабые
+/// ссылки на владельцев. Истёкшие записи удаляются перед прямым запросом или один раз
+/// в начале отрисовки кадра через SoftwareRenderer.
 /// Выданные результаты сохраняют адрес и содержимое, пока жив владеющий ресурс.
 /// Без владеющего owner нормали пересчитываются во временный буфер; его результат
 /// действителен до следующего успешного запроса того же вида без владельца.
@@ -156,6 +159,36 @@ public:
     [[nodiscard]] std::expected<const std::vector<math::Vector3>*, RenderError>
     faceNormals(const render_contracts::MeshResource3& resource) {
         removeExpiredEntries();
+        return findOrComputeFaceNormals(resource);
+    }
+
+    [[nodiscard]] std::expected<const std::vector<math::Vector3>*, RenderError>
+    vertexNormals(const render_contracts::MeshResource3& resource) {
+        removeExpiredEntries();
+        return findOrComputeVertexNormals(resource);
+    }
+
+    [[nodiscard]] std::size_t hits() const noexcept { return m_hits; }
+    [[nodiscard]] std::size_t misses() const noexcept { return m_misses; }
+
+private:
+    struct Entry {
+        std::weak_ptr<const void> owner;
+        const math::Point3* positions;
+        const std::byte* triangles;
+        std::size_t vertexCount;
+        std::size_t triangleCount;
+        std::vector<math::Vector3> normals;
+    };
+
+    friend class huynity::renderer::SoftwareRenderer;
+    friend std::expected<void, RenderError> renderWorld3D(const render_contracts::RenderSnapshot& snapshot,
+                                                          const render_contracts::World3DPass& pass,
+                                                          image::ImageBuffer& framebuffer, std::vector<double>& depth,
+                                                          ShadingDataCache& shadingCache);
+
+    [[nodiscard]] std::expected<const std::vector<math::Vector3>*, RenderError>
+    findOrComputeFaceNormals(const render_contracts::MeshResource3& resource) {
         if (resource.triangles.size() % sizeof(render_contracts::TriangleIndices) != 0) {
             return std::unexpected(RenderError::InvalidResource);
         }
@@ -186,8 +219,7 @@ public:
     }
 
     [[nodiscard]] std::expected<const std::vector<math::Vector3>*, RenderError>
-    vertexNormals(const render_contracts::MeshResource3& resource) {
-        removeExpiredEntries();
+    findOrComputeVertexNormals(const render_contracts::MeshResource3& resource) {
         if (resource.triangles.size() % sizeof(render_contracts::TriangleIndices) != 0) {
             return std::unexpected(RenderError::InvalidResource);
         }
@@ -217,19 +249,6 @@ public:
                                    triangleCount, std::move(*normals)});
         return &m_vertexEntries.back().normals;
     }
-
-    [[nodiscard]] std::size_t hits() const noexcept { return m_hits; }
-    [[nodiscard]] std::size_t misses() const noexcept { return m_misses; }
-
-private:
-    struct Entry {
-        std::weak_ptr<const void> owner;
-        const math::Point3* positions;
-        const std::byte* triangles;
-        std::size_t vertexCount;
-        std::size_t triangleCount;
-        std::vector<math::Vector3> normals;
-    };
 
     void removeExpiredEntries() {
         const auto expired = [](const auto& entry) { return entry.owner.expired(); };
@@ -824,13 +843,13 @@ inline std::expected<void, RenderError> renderWorld3D(const render_contracts::Re
         const std::vector<math::Vector3>* faceNormals = nullptr;
         const std::vector<math::Vector3>* vertexNormals = nullptr;
         if (isGouraud) {
-            auto normals = shadingCache.vertexNormals(resource);
+            const auto normals = shadingCache.findOrComputeVertexNormals(resource);
             if (!normals) {
                 return std::unexpected(normals.error());
             }
             vertexNormals = *normals;
         } else {
-            auto normals = shadingCache.faceNormals(resource);
+            const auto normals = shadingCache.findOrComputeFaceNormals(resource);
             if (!normals) {
                 return std::unexpected(normals.error());
             }
@@ -1204,6 +1223,7 @@ public:
             m_depthBuffer.resize(pixelCount);
         }
         std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<double>::infinity());
+        m_shadingCache.removeExpiredEntries();
         for (const auto& pass : snapshot.passes) {
             std::expected<void, RenderError> rendered;
             if (const auto* world3 = std::get_if<render_contracts::World3DPass>(&pass)) {
